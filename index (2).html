@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AR CAT – เปลี่ยนคนเป็นแมวน่ารัก</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fff6f8;color:#493446;font-family:system-ui,Tahoma,sans-serif}main{max-width:1000px;margin:auto;padding:28px 18px}header{text-align:center}small{letter-spacing:3px;color:#a45079;font-weight:700}h1{margin:8px 0;font-size:clamp(27px,5vw,42px)}header p{color:#876679;margin:8px 0 22px}.stage{position:relative;overflow:hidden;background:#241f32;border:6px solid white;border-radius:26px;box-shadow:0 15px 45px #a54a7620}canvas{display:block;width:100%;height:auto}#welcome{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:#f8ddeb;padding:20px}#welcome b{font-size:65px}#welcome span{font-size:19px}video{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}#status{padding:13px 18px;background:white;border-radius:15px;margin:16px 0;font-weight:600;min-height:52px}#status.error{color:#ad2446;background:#ffe5e9}.controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}button,select{font:inherit;border:1px solid #edd7e2;border-radius:14px;padding:12px 17px;background:white;color:#593e50;cursor:pointer}button.primary{background:#d6538c;border-color:#d6538c;color:white;font-weight:700}button:disabled{opacity:.45;cursor:not-allowed}button:focus-visible,select:focus-visible{outline:3px solid #805bcc;outline-offset:3px}.options{display:flex;justify-content:center;gap:20px;align-items:center;flex-wrap:wrap;margin:18px 0}input{accent-color:#d6538c}.help{background:#fff;border-radius:18px;padding:18px 22px;line-height:1.8;font-size:14px;color:#775f70}.help p{margin:5px 0}footer{text-align:center;font-size:12px;margin-top:20px;color:#9a8090}@media(max-width:500px){main{padding:18px 10px}button{flex:1 1 43%;padding:13px 8px}.stage{border-width:3px}.options{gap:10px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<header><small>REAL-TIME CAMERA MAGIC</small><h1>AR CAT 🐱</h1><p>เปลี่ยนคนเป็นแมวน่ารัก · ไม่ต้องใช้มาร์กเกอร์</p></header>
+<div class="stage"><canvas id="screen" width="960" height="540" aria-label="ภาพกล้องพร้อมเอฟเฟกต์แมว"></canvas><div id="welcome"><b>ฅ^•ﻌ•^ฅ</b><span>พร้อมเป็นแมวแล้วหรือยัง?</span><p>กด “เปิดกล้อง” แล้วอนุญาตการใช้กล้อง</p></div></div>
+<video id="video" autoplay muted playsinline></video>
+<div id="status" role="status" aria-live="polite">พร้อมเริ่มต้น • กล้องยังปิดอยู่</div>
+<div class="controls"><button id="start" class="primary">📷 เปิดกล้อง</button><button id="effects" aria-pressed="true">✨ เอฟเฟกต์: เปิด</button><button id="photo" disabled>📸 ถ่ายภาพ</button><button id="stop" disabled>⏹ ปิดกล้อง</button></div>
+<div class="options"><label><input id="mirror" type="checkbox" checked> ภาพกระจก</label><label>กล้อง <select id="camera"><option value="user">กล้องหน้า</option><option value="environment">กล้องหลัง</option></select></label></div>
+<div class="help"><p><strong>วิธีเล่น:</strong> อยู่ในที่สว่าง ให้เห็นใบหน้าชัด ๆ และถอยออกเพื่อให้ตรวจพบลำตัว เปลี่ยนกล้องได้หลังปิดกล้อง</p><p><strong>ต้องเปิดผ่าน HTTPS หรือ localhost</strong> และใช้อินเทอร์เน็ตเพื่อโหลดไลบรารี / โมเดลครั้งแรก ไม่แนะนำการดับเบิลคลิกไฟล์โดยตรง</p><p>ภาพประมวลผลบนเครื่อง ไม่มีการอัปโหลดภาพกล้องไปยังเซิร์ฟเวอร์ ปุ่มถ่ายภาพบันทึก PNG ตามภาพที่เห็น • ความเร็วขึ้นกับอุปกรณ์</p></div>
+<footer>AR CAT · Made for a little everyday meow</footer>
+</main>
+<script type="module">
+// 1) DOM คือส่วนต่าง ๆ ของหน้าเว็บที่ JavaScript จะควบคุม
+const $ = id => document.getElementById(id);
+const video=$('video'), canvas=$('screen'), ctx=canvas.getContext('2d');
+// เก็บเฟรมกล้องก่อนตรวจจับ เพื่อให้ผลตรวจจับและภาพที่วาดเป็นเฟรมเดียวกัน
+const frame=document.createElement('canvas'), fc=frame.getContext('2d');
+let detector, faceModel, modelsPromise, stream, running=false, busy=false;
+let session=0, timer=0, animation=0, fx=true, hasFrame=false, people=[], faces=[];
+let lastTimestamp=0, completedAt=0;
+function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
+function script(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.crossOrigin='anonymous';s.onload=resolve;s.onerror=()=>{s.remove();reject(new Error('ดาวน์โหลดไลบรารีไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่'));};document.head.append(s);});}
+// 2) โหลดโมเดลจาก CDN เมื่อกดเปิดกล้องเท่านั้น; ไม่ส่งภาพออกจากเครื่อง
+async function loadModels(){
+ if(modelsPromise)return modelsPromise;
+ modelsPromise=(async()=>{
+  status('กำลังโหลดไลบรารีตรวจจับ… ครั้งแรกอาจใช้เวลาสักครู่');
+  if(!window.tf)await script('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+  if(!window.cocoSsd)await script('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
+  await tf.ready();
+  status('กำลังโหลดโมเดลตรวจจับคน…');
+  if(!detector)detector=await cocoSsd.load({base:'lite_mobilenet_v2'});
+  status('กำลังโหลดโมเดลใบหน้า…');
+  const {FilesetResolver,FaceLandmarker}=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs');
+  const vision=await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm');
+  if(!faceModel)faceModel=await FaceLandmarker.createFromOptions(vision,{
+   baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',delegate:'CPU'},
+   runningMode:'VIDEO',numFaces:4,minFaceDetectionConfidence:.5,minTrackingConfidence:.5
+  });
+ })().catch(e=>{modelsPromise=null;throw e;});
+ return modelsPromise;
+}
+// 3) เริ่ม/หยุดกล้อง: token session ป้องกันผลเก่ากลับมาหลังผู้ใช้กดหยุด
+$('start').onclick=async()=>{
+ if(busy||running)return;
+ if(!isSecureContext||!navigator.mediaDevices?.getUserMedia){status('เปิดกล้องไม่ได้: กรุณาใช้ HTTPS หรือ http://localhost และเบราว์เซอร์ที่รองรับกล้อง',true);return;}
+ const token=++session;busy=true;$('start').disabled=true;$('stop').disabled=false;$('camera').disabled=true;
+ try{
+  status('กรุณาอนุญาตใช้กล้องในหน้าต่างของเบราว์เซอร์…');
+  const acquired=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:$('camera').value},width:{ideal:960},height:{ideal:720}}});
+  if(token!==session){acquired.getTracks().forEach(t=>t.stop());return;}
+  stream=acquired;video.srcObject=stream;await video.play();
+  stream.getVideoTracks()[0].addEventListener('ended',()=>{if(token===session)stopCamera('กล้องถูกตัดการเชื่อมต่อ กรุณาเปิดกล้องใหม่');});
+  await loadModels();if(token!==session)return;
+  running=true;busy=false;$('welcome').style.display='none';
+  status('กำลังรอให้คนเข้ากล้อง');processFrame(token);
+ }catch(e){if(token!==session)return;stopCamera();const errors={NotAllowedError:'ไม่ได้รับอนุญาตใช้กล้อง กรุณาอนุญาตกล้องในการตั้งค่าเว็บไซต์',NotFoundError:'ไม่พบกล้องบนอุปกรณ์',NotReadableError:'กล้องอาจถูกใช้งานโดยแอปอื่น กรุณาปิดแอปนั้นก่อน',OverconstrainedError:'กล้องไม่รองรับการตั้งค่านี้'};status(errors[e.name]||('เริ่มใช้งานไม่ได้: '+e.message),true);}
+};
+function stopCamera(message='ปิดกล้องแล้ว • หยุดการใช้งานกล้องเรียบร้อย'){
+ ++session;running=false;clearTimeout(timer);cancelAnimationFrame(animation);
+ if(stream)stream.getTracks().forEach(track=>track.stop());stream=null;video.pause();video.srcObject=null;
+ people=[];faces=[];hasFrame=false;ctx.clearRect(0,0,canvas.width,canvas.height);
+ $('welcome').style.display='grid';$('photo').disabled=true;$('stop').disabled=true;$('camera').disabled=false;
+ // ถ้ายังโหลดโมเดลอยู่ รอให้เสร็จก่อนเปิดใหม่เพื่อไม่ให้การโหลดซ้อนกัน
+ if(busy&&modelsPromise){$('start').disabled=true;modelsPromise.catch(()=>{}).finally(()=>{busy=false;$('start').disabled=false;status(message);});}
+ else{busy=false;$('start').disabled=false;}status(message);
+}
+$('stop').onclick=()=>stopCamera();
+window.addEventListener('pagehide',()=>stopCamera());
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&(running||stream))stopCamera('พักการใช้งานแล้ว • กดเปิดกล้องเพื่อเริ่มอีกครั้ง');});
+// 4) ประมวลผลทีละเฟรม ไม่ให้คำสั่งตรวจจับซ้อนกัน
+async function processFrame(token){
+ if(!running||token!==session)return;
+ try{
+  if(video.readyState<2){timer=setTimeout(()=>processFrame(token),100);return;}
+  const scale=Math.min(1,640/video.videoWidth);
+  const w=Math.round(video.videoWidth*scale),h=Math.round(video.videoHeight*scale);
+  // ระหว่าง await ให้คง canvas เก่าไว้ แล้ววาดใหม่เมื่อผลตรวจจับพร้อม
+  cancelAnimationFrame(animation);frame.width=w;frame.height=h;fc.drawImage(video,0,0,w,h);
+  const predictions=await detector.detect(frame,10,.5);
+  if(!running||token!==session)return;
+  lastTimestamp=Math.max(performance.now(),lastTimestamp+1);
+  const result=faceModel.detectForVideo(frame,lastTimestamp);
+  people=predictions.filter(p=>p.class==='person'&&p.score>=.5);
+  faces=result.faceLandmarks||[];
+  canvas.width=w;canvas.height=h;hasFrame=true;completedAt=performance.now();
+  status(people.length?'พบคนแล้ว! '+people.length+' คน'+(faces.length?' • แมวเหมียวพร้อมแล้ว 🐱':' • หันหน้าเข้ากล้องเพื่อใส่หูแมว'):'กำลังรอให้คนเข้ากล้อง');
+  $('photo').disabled=false;paint();
+  // เว้นช่วงสั้น ๆ ให้ UI ตอบสนองได้บนมือถือ
+  timer=setTimeout(()=>processFrame(token),70);
+ }catch(e){if(token===session){stopCamera();status('ประมวลผลไม่ได้ กรุณาลองเปิดกล้องใหม่: '+e.message,true);}}
+}
+// 5) Canvas เดียวรวมภาพและกราฟิก: กลับแกนทั้งคู่ จึงตรงกันในโหมดกระจก
+function paint(){
+ if(!running||!hasFrame)return;
+ const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.save();
+ if($('mirror').checked){ctx.translate(w,0);ctx.scale(-1,1);}
+ ctx.drawImage(frame,0,0);
+ if(fx&&people.length){
+  for(const p of people){const [x,y,bw,bh]=p.bbox;ctx.strokeStyle='#ffd1e6';ctx.lineWidth=3;ctx.setLineDash([9,5]);ctx.strokeRect(x,y,bw,bh);ctx.setLineDash([]);particles(p.bbox,performance.now()/1000);}
+  for(const face of faces){const n=face[1];if(people.some(p=>{const [x,y,bw,bh]=p.bbox;return n.x*w>=x&&n.x*w<=x+bw&&n.y*h>=y&&n.y*h<=y+bh;}))cat(face);}
+ }
+ ctx.restore();
+ // ข้อความอยู่นอก transform เพื่อไม่ให้ตัวอักษรกลับด้าน
+ if(fx)for(const p of people){let [x,y,bw]=p.bbox;if($('mirror').checked)x=w-x-bw;ctx.font='bold 16px Tahoma, sans-serif';const label='พบคนแล้ว!';const tw=ctx.measureText(label).width+18;const lx=Math.max(0,Math.min(x,w-tw)),ly=Math.max(24,y);ctx.fillStyle='#d6538c';ctx.fillRect(lx,ly-24,tw,25);ctx.fillStyle='white';ctx.fillText(label,lx+9,ly-6);}
+ animation=requestAnimationFrame(paint);
+}
+function polygon(points,fill,stroke){ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=3;ctx.stroke();}}
+// ตำแหน่ง 1 = จมูก, 33/263 = มุมตา, 10 = หน้าผาก
+function cat(lm){
+ const point=i=>({x:lm[i].x*canvas.width,y:lm[i].y*canvas.height});
+ const a=point(33),b=point(263),nose=point(1),top=point(10);
+ const size=Math.hypot(b.x-a.x,b.y-a.y)*1.65,angle=Math.atan2(b.y-a.y,b.x-a.x);
+ ctx.save();ctx.translate(top.x,top.y);ctx.rotate(angle);
+ for(const side of [-1,1]){ctx.save();ctx.scale(side,1);polygon([[size*.13,0],[size*.43,-size*.47],[size*.52,size*.10]],'#fff1d9','#815368');polygon([[size*.24,-size*.02],[size*.41,-size*.32],[size*.45,size*.04]],'#f5a9c9');ctx.restore();}ctx.restore();
+ ctx.save();ctx.translate(nose.x,nose.y);ctx.rotate(angle);ctx.lineCap='round';
+ polygon([[-size*.075,-size*.03],[size*.075,-size*.03],[0,size*.055]],'#e977a8','#8b526f');
+ ctx.strokeStyle='#715065';ctx.lineWidth=Math.max(2,size*.014);
+ for(const side of [-1,1])for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(side*size*.15,size*.025+i*size*.038);ctx.lineTo(side*size*.43,size*.025+i*size*.105);ctx.stroke();}
+ ctx.beginPath();ctx.moveTo(0,size*.055);ctx.lineTo(0,size*.105);ctx.stroke();
+ ctx.fillStyle='#ff9bc04d';for(const s of [-1,1]){ctx.beginPath();ctx.ellipse(s*size*.25,size*.07,size*.10,size*.055,0,0,Math.PI*2);ctx.fill();}ctx.restore();
+}
+// หัวใจและดาวเป็นเส้น Canvas ทั้งหมด ไม่ใช้ไฟล์รูปภาพ
+function particles(box,t){const [x,y,w,h]=box;for(let i=0;i<10;i++){const phase=t*.7+i*2.4,px=x+w/2+Math.cos(phase)*(w*.56+8),py=y+h*(.15+.7*((i/10+t*.055)%1));ctx.save();ctx.translate(px,py);ctx.rotate(Math.sin(phase)*.2);const r=7+2*Math.sin(phase);ctx.fillStyle=i%2?'#ffe498':'#ff99c2';ctx.beginPath();if(i%2){for(let j=0;j<10;j++){const a=-Math.PI/2+j*Math.PI/5,rr=j%2?r*.45:r;j?ctx.lineTo(Math.cos(a)*rr,Math.sin(a)*rr):ctx.moveTo(Math.cos(a)*rr,Math.sin(a)*rr);}ctx.closePath();}else{ctx.moveTo(0,r);ctx.bezierCurveTo(-r*2,-r*.2,-r,-r*1.7,0,-r*.5);ctx.bezierCurveTo(r,-r*1.7,r*2,-r*.2,0,r);}ctx.fill();ctx.restore();}}
+$('effects').onclick=()=>{fx=!fx;$('effects').textContent='✨ เอฟเฟกต์: '+(fx?'เปิด':'ปิด');$('effects').setAttribute('aria-pressed',String(fx));};
+// 6) ดาวน์โหลดจาก Canvas ที่แสดงอยู่ จึงได้ภาพกระจกและเอฟเฟกต์เหมือนหน้าจอ
+$('photo').onclick=()=>{if(!running||!hasFrame)return;canvas.toBlob(blob=>{if(!blob){status('บันทึกภาพไม่ได้ กรุณาลองใหม่',true);return;}const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AR-CAT-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);},'image/png');};
+</script>
+</body>
+</html>
